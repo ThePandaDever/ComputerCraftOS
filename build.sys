@@ -1,0 +1,234 @@
+¾root/config/os.cfg½bootapps=os/apps/desktop.lua;
+skipterm=true;¾os/api.lua½function openWin(name,size)
+    win = {
+        name=name
+        size=size
+    }
+    table.insert(windows,win)
+end¾os/bnd/console.lua½logs = {}
+ 
+function log(text)
+    table.insert(logs,text)
+end¾os/config.lua½require "utils"
+ 
+function cfg_load(cfg)
+    settingarr = splitby(cfg,";")
+    cfg = {}
+    for i,v in ipairs(settingarr) do
+        tokens = splitby(v,"=")
+        cfg[tokens[1]] = tokens[2]
+    end
+    return cfg
+end¾os/main.lua½require "bnd/console"
+ 
+require "config"
+require "utils"
+ 
+state = "terminal"
+windows = {}
+config = {}
+logs = {}
+running = true
+ 
+function boot()
+    log("boot {")
+    log("    config {")
+    
+    local f = fs.open("root/config/os.cfg","r")
+    local contents = f.readAll()
+    f.close()
+    config = cfg_load(contents)
+    for k,v in pairs(config) do
+        log("        "..k..": "..v)
+    end
+    
+    log("    }")
+    
+    log("    startup apps {")
+    
+    log("    }")
+    
+    log("}")
+    
+    modem = peripheral.find("modem")
+    if modem ~= nil then
+        log("modem found, connecting...")
+        modem.open(1)
+        modem.transmit(1, 1, tostring(os.getComputerID()).." online")
+        sleep(.1)
+        log("connected!")
+    end
+end
+ 
+function space()
+    log("")
+end
+ 
+function log(text)
+    log_custom(text,colors.white)
+end
+ 
+function log_error(text)
+    log_custom(text,colors.red)
+end
+ 
+function log_custom(text,color)
+    table.insert(logs,{text=text,color=color})
+end
+ 
+function term_eval(val)
+    if string.sub(val,1,1) == '"' and string.sub(val,#val,#val) == '"' then
+        return string.sub(val,2,#val-1)
+    end
+    return val
+end
+ 
+function term_cmd(command)
+    log_custom("> " .. command,colors.yellow)
+    tokens = split(command)
+    cmd = tokens[1]
+    if cmd == "echo" then
+        log(term_eval(tokens[2]))
+    elseif cmd == "clear" then
+        logs = {}
+    elseif cmd == "sv_send" then
+        modem.transmit(1,1,term_eval(tokens[2]))
+    elseif cmd == "sv_ls" then
+        modem.transmit(1,1,"fl ls "..tokens[2])
+    elseif cmd == "sv_get" then
+        modem.transmit(1,1,"fl get "..tokens[2])
+    elseif cmd == "sv_set" then
+        local file = fs.open(tokens[2], "r")
+        local contents = string.gsub(string.gsub(file.readAll()," ",""),"","\n")
+        modem.transmit(1,1,"fl set "..tokens[2].." "..contents)
+    elseif cmd == "redirect" then
+        local monitors = { peripheral.find("monitor") }
+        term.redirect(monitors[1])
+    elseif cmd == "quit" then
+        term.clear()
+        term.setCursorPos(1,1)
+        print("booting out of flufi os")
+        running = false
+    elseif cmd == "help" then
+        cmds = {
+            echo="prints a message to console",
+            clear="clears the terminal",
+            quit="exits flufi os",
+            redirect="redirects the screen to a monitor",
+            sv_ls="lists files in specified directory",
+            sv_get="downloads file at path",
+            sv_set="downloads file at path on server"
+        }
+        spaceamt = 10
+        log("--------help--------")
+        for k,v in pairs(cmds) do
+            amt = spaceamt - #k
+            space = string.rep(" ",amt)
+            log(k..space..": "..v)
+        end
+        log("--------------------")
+    else
+        log_error('unknown cmd "' .. tostring(cmd) .. '"')
+    end
+end
+ 
+function term_draw_loop()
+    while running do
+        term_draw()
+    end
+end
+function term_draw()
+    ox,oy = term.getCursorPos()
+    tw,th = term.getSize()
+    
+    term.setCursorPos(1,th-1)
+    term.setTextColor(colors.gray)
+    term.write(string.rep("-",tw))
+    
+    for i, text in ipairs(logs) do
+        y = th - (#logs - i) - 2
+        term.setCursorPos(1,y)
+        term.clearLine(y)
+        term.setTextColor(text.color)
+        term.write(text.text)
+    end
+    term.setTextColor(colors.white)
+    term.setCursorPos(ox,th)
+    sleep(.01)
+end
+ 
+function term_input_loop()
+    while running do
+        tw,th = term.getSize()
+        term.clear()
+        term_draw()
+        term.setCursorPos(1,th)
+        term.setTextColor(colors.yellow)
+        term.write("> ")
+        term.setTextColor(colors.white)
+        local cmd = read()
+        term_cmd(cmd)
+    end
+end
+ 
+function modem_loop()
+    local event, side, channel, replyChannel, message, distance
+    while running do
+        event, side, channel, replyChannel, message, distance = os.pullEvent("modem_message")
+        tokens = split(message)
+        if tokens[1] == "fl-ls" then
+            for i,v in ipairs(splitby(tokens[2],";")) do
+                log(v)
+            end
+        end
+        if tokens[1] == "fl-get" then
+            local file = tokens[2]
+            local data = string.gsub(string.gsub(tokens[3],""," "),"","\n")
+            local file = fs.open(file, "w")
+            file.write(data)
+            file.close()
+        end
+    end
+end
+ 
+term.clear()
+ 
+parallel.waitForAny(term_draw_loop,term_input_loop,boot)
+ 
+--sleep(.5)
+while running do
+    parallel.waitForAny(modem_loop,term_draw_loop,term_input_loop)
+    sleep(.01)
+end
+ 
+--boot but then also terminal
+¾os/utils.lua½function split(inputstr)
+    if sep == nil then
+        sep = "%s"
+    end
+    local t = {""}
+    local instring = false
+    for i = 1, #inputstr do
+        char = string.sub(inputstr, i, i)
+        if char == '"' then
+            instring = not instring
+        end
+        if char == " " and not instring then
+            table.insert(t,"")
+        else
+            t[#t] = t[#t] .. char
+        end
+    end
+    return t
+end
+function splitby(inputstr,sep)
+    if sep == nil then
+        sep = "%s"
+    end
+    inputstr = string.gsub(inputstr,"\n","")
+    local t = {}
+    for token in string.gmatch(inputstr, '[^'..sep..']+') do
+        table.insert(t,token)
+    end
+    return t
+end¾boot.lua/½shell.run("os/main.lua")¾startup.lua/½shell.run("boot.lua")
