@@ -1,0 +1,6 @@
+local request = http.get("https://raw.githubusercontent.com/ThePandaDever/ComputerCraftOS/main/build.sys")
+local file = fs.open("build.sys","w")
+file.write(request.readAll())
+file.close()
+shell.run("wget","run","https://raw.githubusercontent.com/ThePandaDever/ComputerCraftOS/main/installer.lua")
+request.close()
